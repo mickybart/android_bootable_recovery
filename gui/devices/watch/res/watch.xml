@@ -1197,14 +1197,14 @@
 			<object type="button">
 				<condition var1="tw_partition_ext" op="=" var2="1" />
 				<placement x="%col1_x%" y="%row2_y%" />
-				<text>EXT2</text>
+				<text>EXT3</text>
 				<actions>
 					<action function="set">tw_back=refreshfilesystem</action>
 					<action function="set">tw_action=changefilesystem</action>
 					<action function="set">tw_action_param=%tw_partition_mount_point%</action>
-					<action function="set">tw_action_new_file_system=ext2</action>
+					<action function="set">tw_action_new_file_system=ext3</action>
 					<action function="set">tw_has_action2=0</action>
-					<action function="set">tw_text1=Change %tw_partition_name% to EXT2?</action>
+					<action function="set">tw_text1=Change %tw_partition_name% to EXT3?</action>
 					<action function="set">tw_text2=</action>
 					<action function="set">tw_action_text1=Formatting...</action>
 					<action function="set">tw_complete_text1=Format Complete</action>
@@ -1216,14 +1216,14 @@
 			<object type="button">
 				<condition var1="tw_partition_ext" op="=" var2="1" />
 				<placement x="%col2_x%" y="%row2_y%" />
-				<text>EXT3</text>
+				<text>BTRFS</text>
 				<actions>
 					<action function="set">tw_back=refreshfilesystem</action>
 					<action function="set">tw_action=changefilesystem</action>
 					<action function="set">tw_action_param=%tw_partition_mount_point%</action>
-					<action function="set">tw_action_new_file_system=ext3</action>
+					<action function="set">tw_action_new_file_system=btrfs</action>
 					<action function="set">tw_has_action2=0</action>
-					<action function="set">tw_text1=Change %tw_partition_name% to EXT3?</action>
+					<action function="set">tw_text1=Change %tw_partition_name% to BTRFS?</action>
 					<action function="set">tw_text2=</action>
 					<action function="set">tw_action_text1=Formatting...</action>
 					<action function="set">tw_complete_text1=Format Complete</action>
@@ -1830,8 +1830,8 @@
 				<text>Delete</text>
 				<actions>
 					<action function="set">tw_back=restore</action>
-					<action function="set">tw_action=cmd</action>
-					<action function="set">tw_action_param=cd %tw_backups_folder% &amp;&amp; rm -rf &quot;%tw_restore_name%&quot;</action>
+					<action function="set">tw_action=deletebackup</action>
+					<action function="set">tw_action_param=%tw_backups_folder%/%tw_restore_name%</action>
 					<action function="set">tw_text1=Delete Backup? %tw_restore_name%</action>
 					<action function="set">tw_text2=This cannot be undone!</action>
 					<action function="set">tw_action_text1=Deleting Backup...</action>
@@ -1920,8 +1920,8 @@
 				<text>Delete Backup</text>
 				<actions>
 					<action function="set">tw_back=restore</action>
-					<action function="set">tw_action=cmd</action>
-					<action function="set">tw_action_param=cd %tw_backups_folder% &amp;&amp; rm -rf &quot;%tw_restore_name%&quot;</action>
+					<action function="set">tw_action=deletebackup</action>
+					<action function="set">tw_action_param=%tw_backups_folder%/%tw_restore_name%</action>
 					<action function="set">tw_text1=Delete Backup? %tw_restore_name%</action>
 					<action function="set">tw_text2=This cannot be undone!</action>
 					<action function="set">tw_action_text1=Deleting Backup...</action>
@@ -1968,8 +1968,8 @@
 				<restrict minlen="1" maxlen="64" allow=" abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890-_.{}[]" />
 				<actions>
 					<action function="set">tw_back=restore</action>
-					<action function="set">tw_action=cmd</action>
-					<action function="set">tw_action_param=cd %tw_backups_folder% &amp;&amp; mv &quot;%tw_restore_name%&quot; &quot;%tw_backup_rename%&quot;</action>
+					<action function="set">tw_action=renamebackup</action>
+					<action function="set">tw_action_param=%tw_backups_folder%,%tw_restore_name%,%tw_backup_rename%</action>
 					<action function="set">tw_text1=Rename Backup?</action>
 					<action function="set">tw_text2=This cannot be undone!</action>
 					<action function="set">tw_action_text1=Renaming Backup...</action>
@@ -2354,15 +2354,21 @@
 				<text>Enable MD5 verification of backup files.</text>
 				<data variable="tw_skip_md5_check" />
 			</object>
-
+			
 			<object type="checkbox">
 				<placement x="%col1_x%" y="%row4_text_y%" />
+				<text>Skip snapshot during backup.</text>
+				<data variable="tw_skip_backups_snapshot" />
+			</object>
+
+			<object type="checkbox">
+				<placement x="%col1_x%" y="%row5_text_y%" />
 				<text>Use 24-hour clock.</text>
 				<data variable="tw_military_time" />
 			</object>
 
 			<object type="checkbox">
-				<placement x="%col1_x%" y="%row5_text_y%" />
+				<placement x="%col1_x%" y="%row6_text_y%" />
 				<text>Simulate actions for theme testing.</text>
 				<data variable="tw_simulate_actions" />
 			</object>

@@ -88,6 +88,7 @@
 #define TW_RM_RF_VAR                "tw_rm_rf"
 
 #define TW_BACKUPS_FOLDER_VAR       "tw_backups_folder"
+#define TW_SKIP_BACKUPS_SNAPSHOT    "tw_skip_backups_snapshot"
 
 #define TW_SP1_PARTITION_NAME_VAR   "tw_sp1_name"
 #define TW_SP2_PARTITION_NAME_VAR   "tw_sp2_name"

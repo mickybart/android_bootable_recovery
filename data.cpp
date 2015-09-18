@@ -790,6 +790,7 @@ void DataManager::SetDefaultValues()
 	mValues.insert(make_pair(TW_RM_RF_VAR, make_pair("0", 1)));
 	mValues.insert(make_pair(TW_SKIP_MD5_CHECK_VAR, make_pair("0", 1)));
 	mValues.insert(make_pair(TW_SKIP_MD5_GENERATE_VAR, make_pair("0", 1)));
+	mValues.insert(make_pair(TW_SKIP_BACKUPS_SNAPSHOT, make_pair("0", 1)));
 	mValues.insert(make_pair(TW_SDEXT_SIZE, make_pair("512", 1)));
 	mValues.insert(make_pair(TW_SWAP_SIZE, make_pair("32", 1)));
 	mValues.insert(make_pair(TW_SDPART_FILE_SYSTEM, make_pair("ext3", 1)));

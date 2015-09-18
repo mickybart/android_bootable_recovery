@@ -52,6 +52,7 @@ public:
 public:
 	bool Is_Mounted();                                                        // Checks mount to see if the partition is currently mounted
 	bool Mount(bool Display_Error);                                           // Mounts the partition if it is not mounted
+	bool Mount_Root(bool Display_Error);                                      // Mounts the partition if it is not mounted (Specific for filesystem like btrfs)
 	bool UnMount(bool Display_Error);                                         // Unmounts the partition if it is mounted
 	bool Wipe(string New_File_System);                                        // Wipes the partition
 	bool Wipe();                                                              // Wipes the partition
@@ -74,6 +75,8 @@ public:
 	bool Flash_Image(string Filename);                                        // Flashes an image to the partition
 	void Change_Mount_Read_Only(bool new_value);                              // Changes Mount_Read_Only to new_value
 	int Check_Lifetime_Writes();
+	bool Clean_Backup(string backup_folder);                                  // Remove the associated backup from the backup folder
+	bool Rename_Backup(string Backup_Folder, string Rename_Backup_Folder);    // Rename the associated backup if needed
 
 public:
 	string Current_File_System;                                               // Current file system
@@ -88,6 +91,7 @@ protected:
 	void Setup_Data_Media();                                                  // Sets up a partition as a /data/media emulated storage partition
 
 private:
+	bool Mount_Internal(bool Display_Error, string mountOptions, int mountFlags); // Mounts the partition if it is not mounted (used by Mount and RootMount)
 	bool Process_Fstab_Line(string Line, bool Display_Error);                 // Processes a fstab line
 	void Find_Actual_Block_Device();                                          // Determines the correct block device and stores it in Actual_Block_Device
 
@@ -109,13 +113,16 @@ private:
 	bool Wipe_RMRF();                                                         // Uses rm -rf to wipe
 	bool Wipe_F2FS();                                                         // Uses mkfs.f2fs to wipe
 	bool Wipe_NTFS();                                                         // Uses mkntfs to wipe
+	bool Wipe_BTRFS();                                                        // Uses mkfs.btrfs or btrfs to wipe
 	bool Wipe_Data_Without_Wiping_Media();                                    // Uses rm -rf to wipe but does not wipe /data/media
 	bool Backup_Tar(string backup_folder, const unsigned long long *overall_size, const unsigned long long *other_backups_size, pid_t &tar_fork_pid); // Backs up using tar for file systems
 	bool Backup_DD(string backup_folder);                                     // Backs up using dd for emmc memory types
 	bool Backup_Dump_Image(string backup_folder);                             // Backs up using dump_image for MTD memory types
+	bool Backup_Snapshot(string backup_folder);                               // Backs up using snaphot for supported file systems
 	string Get_Restore_File_System(string restore_folder);                    // Returns the file system that was in place at the time of the backup
 	bool Restore_Tar(string restore_folder, string Restore_File_System, const unsigned long long *total_restore_size, unsigned long long *already_restored_size); // Restore using tar for file systems
 	bool Restore_Image(string restore_folder, const unsigned long long *total_restore_size, unsigned long long *already_restored_size, string Restore_File_System); // Restore using dd for images
+	bool Restore_Snapshot(string restore_folder, string Restore_File_System, const unsigned long long *total_restore_size, unsigned long long *already_restored_size); // Restore using snaphost for file systems
 	bool Get_Size_Via_statfs(bool Display_Error);                             // Get Partition size, used, and free space using statfs
 	bool Get_Size_Via_df(bool Display_Error);                                 // Get Partition size, used, and free space using df command
 	bool Make_Dir(string Path, bool Display_Error);                           // Creates a directory if it doesn't already exist
@@ -124,6 +131,8 @@ private:
 	void Mount_Storage_Retry(void);                                           // Tries multiple times with a half second delay to mount a device in case storage is slow to mount
 	bool Flash_Image_DD(string Filename);                                     // Flashes an image to the partition using dd
 	bool Flash_Image_FI(string Filename);                                     // Flashes an image to the partition using flash_image for mtd nand
+	bool Clean_Backup_Snapshot(string backup_folder);                         // Remove a snapshot backup
+	bool Rename_Backup_Snapshot(string Backup_Folder, string Rename_Backup_Folder); // Rename a snapshot backup
 
 private:
 	bool Can_Be_Mounted;                                                      // Indicates that the partition can be mounted
@@ -168,6 +177,8 @@ private:
 	string Fstab_File_System;                                                 // File system from the recovery.fstab
 	int Mount_Flags;                                                          // File system flags from recovery.fstab
 	string Mount_Options;                                                     // File system options from recovery.fstab
+	int Root_Mount_Flags;                                                     // File system flags from recovery.fstab (Specific for filesystem like btrfs)
+	string Root_Mount_Options;                                                // File system options from recovery.fstab (Specific for filesystem like btrfs)
 	unsigned long Format_Block_Size;                                          // Block size for formatting
 	bool Ignore_Blkid;                                                        // Ignore blkid results due to superblocks lying to us on certain devices / partitions
 	bool Retain_Layout_Version;                                               // Retains the .layout_version file during a wipe (needed on devices like Sony Xperia T where /data and /data/media are separate partitions)
@@ -233,6 +244,8 @@ public:
 	bool Remove_MTP_Storage(string Mount_Point);                              // Adds or removes an MTP Storage partition
 	bool Remove_MTP_Storage(unsigned int Storage_ID);                         // Adds or removes an MTP Storage partition
 	bool Flash_Image(string Filename);                                        // Flashes an image to a selected partition from the partition list
+	bool Delete_Backup_Folder(string Backup_Folder);                          // Delete a specific backup
+	bool Rename_Backup_Folder(string Backup_Folder, string Rename_Backup_Folder); // Rename a backup
 
 	TWAtomicInt stop_backup;
 

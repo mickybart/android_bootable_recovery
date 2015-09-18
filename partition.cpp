@@ -562,6 +562,15 @@ bool TWPartition::Process_Flags(string Flags, bool Display_Error) {
 				Mount_Options.resize(Mount_Options.size() - 1);
 			}
 			Process_FS_Flags(Mount_Options, Mount_Flags);
+		} else if (ptr_len > 12 && strncmp(ptr, "rootfsflags=", 12) == 0) {
+			ptr += 12;
+			if (*ptr == '\"') ptr++;
+
+			Root_Mount_Options = ptr;
+			if (Root_Mount_Options.substr(Root_Mount_Options.size() - 1, 1) == "\"") {
+				Root_Mount_Options.resize(Root_Mount_Options.size() - 1);
+			}
+			Process_FS_Flags(Root_Mount_Options, Root_Mount_Flags);
 		} else if ((ptr_len > 12 && strncmp(ptr, "encryptable=", 12) == 0) || (ptr_len > 13 && strncmp(ptr, "forceencrypt=", 13) == 0)) {
 			ptr += 12;
 			if (*ptr == '=') ptr++;
@@ -613,6 +622,7 @@ bool TWPartition::Is_File_System(string File_System) {
 		File_System == "yaffs2" ||
 		File_System == "exfat" ||
 		File_System == "f2fs" ||
+		File_System == "btrfs" ||
 		File_System == "auto")
 		return true;
 	else
@@ -942,9 +952,9 @@ bool TWPartition::Is_Mounted(void) {
 	return ret;
 }
 
-bool TWPartition::Mount(bool Display_Error) {
+bool TWPartition::Mount_Internal(bool Display_Error, string mountOptions, int mountFlags) {
 	int exfat_mounted = 0;
-	unsigned long flags = Mount_Flags;
+	unsigned long flags = mountFlags;
 
 	if (Is_Mounted()) {
 		return true;
@@ -1037,7 +1047,7 @@ bool TWPartition::Mount(bool Display_Error) {
 		mount_fs = "texfat";
 
 	if (!exfat_mounted &&
-		mount(Actual_Block_Device.c_str(), Mount_Point.c_str(), mount_fs.c_str(), flags, Mount_Options.c_str()) != 0 &&
+		mount(Actual_Block_Device.c_str(), Mount_Point.c_str(), mount_fs.c_str(), flags, mountOptions.c_str()) != 0 &&
 		mount(Actual_Block_Device.c_str(), Mount_Point.c_str(), mount_fs.c_str(), flags, NULL) != 0) {
 #ifdef TW_NO_EXFAT_FUSE
 		if (Current_File_System == "exfat") {
@@ -1071,6 +1081,14 @@ bool TWPartition::Mount(bool Display_Error) {
 		TWFunc::Exec_Cmd(Command);
 	}
 	return true;
+}
+
+bool TWPartition::Mount_Root(bool Display_Error) {
+	return Mount_Internal(Display_Error, Root_Mount_Options, Root_Mount_Flags);
+}
+
+bool TWPartition::Mount(bool Display_Error) {
+	return Mount_Internal(Display_Error, Mount_Options, Mount_Flags);
 }
 
 bool TWPartition::UnMount(bool Display_Error) {
@@ -1142,6 +1160,8 @@ bool TWPartition::Wipe(string New_File_System) {
 			wiped = Wipe_F2FS();
 		else if (New_File_System == "ntfs")
 			wiped = Wipe_NTFS();
+		else if (New_File_System == "btrfs")
+			wiped = Wipe_BTRFS();
 		else {
 			LOGERR("Unable to wipe '%s' -- unknown file system '%s'\n", Mount_Point.c_str(), New_File_System.c_str());
 			unlink("/.layout_version");
@@ -1389,13 +1409,23 @@ bool TWPartition::Resize() {
 }
 
 bool TWPartition::Backup(string backup_folder, const unsigned long long *overall_size, const unsigned long long *other_backups_size, pid_t &tar_fork_pid) {
+	int do_snapshot;
+	DataManager::GetValue(TW_SKIP_BACKUPS_SNAPSHOT, do_snapshot);
+	if (do_snapshot == 0)
+		do_snapshot = true;
+	else
+		do_snapshot = false;
+	
 	if (Backup_Method == FILES) {
-		return Backup_Tar(backup_folder, overall_size, other_backups_size, tar_fork_pid);
-	}
-	else if (Backup_Method == DD)
+		if (do_snapshot && Current_File_System == "btrfs")
+			return Backup_Snapshot(backup_folder);
+		else
+			return Backup_Tar(backup_folder, overall_size, other_backups_size, tar_fork_pid);
+	} else if (Backup_Method == DD)
 		return Backup_DD(backup_folder);
 	else if (Backup_Method == FLASH_UTILS)
 		return Backup_Dump_Image(backup_folder);
+	
 	LOGERR("Unknown backup method for '%s'\n", Mount_Point.c_str());
 	return false;
 }
@@ -1458,9 +1488,12 @@ bool TWPartition::Restore(string restore_folder, const unsigned long long *total
 
 	Restore_File_System = Get_Restore_File_System(restore_folder);
 
-	if (Is_File_System(Restore_File_System))
-		return Restore_Tar(restore_folder, Restore_File_System, total_restore_size, already_restored_size);
-	else if (Is_Image(Restore_File_System)) {
+	if (Is_File_System(Restore_File_System)) {
+		if (Backup_FileName.substr(Backup_FileName.size()-4,4) == ".sna")
+			return Restore_Snapshot(restore_folder, Restore_File_System, total_restore_size, already_restored_size);
+		else
+			return Restore_Tar(restore_folder, Restore_File_System, total_restore_size, already_restored_size);
+	} else if (Is_Image(Restore_File_System)) {
 		return Restore_Image(restore_folder, total_restore_size, already_restored_size, Restore_File_System);
 	}
 
@@ -1828,6 +1861,97 @@ bool TWPartition::Wipe_NTFS() {
 	return false;
 }
 
+bool TWPartition::Wipe_BTRFS() {
+	/*
+	 * format to btrfs if the filesystem is not yet in btrfs
+	 * delete subvolume if needed
+	 * create a new subvolume
+	 * create folder __snapshot if needed
+	 * Recreate_AndSec_Folder
+	 */
+	
+	string command;
+	string subvolume;
+	string subvolume_path;
+	bool wasMounted = Is_Mounted();
+	
+	if (!TWFunc::Path_Exists("/sbin/mkfs.btrfs") || !TWFunc::Path_Exists("/sbin/btrfs")) {
+		LOGERR("mkfs.btrfs and btrfs not found.\n");
+		return false;
+	}
+
+	subvolume = Mount_Point.substr(1, Mount_Point.size() - 1);
+	subvolume_path = "/" + subvolume + "/" + subvolume;
+	
+	if (!UnMount(true))
+		return false;
+	
+	// Format
+	if (Current_File_System != "btrfs") {
+		gui_print("Formatting %s using mkfs.btrfs...\n", Display_Name.c_str());
+		Find_Actual_Block_Device();
+		command = "mkfs.btrfs -f -O ^extref,^skinny-metadata " + Actual_Block_Device;
+		if (TWFunc::Exec_Cmd(command) != 0) {
+			LOGERR("Unable to wipe '%s'.\n", Mount_Point.c_str());
+			if (wasMounted) Mount(true);
+			return false;
+		}
+	}
+	
+	// Mount Root
+	if (!Mount_Root(true)) {
+		if (wasMounted) Mount(true);
+		return false;
+	}
+	
+	// Delete subvolume
+	if (TWFunc::Path_Exists(subvolume_path)) {
+		gui_print("Deleting subvolume for %s ...\n", Display_Name.c_str());
+		command = "btrfs subvolume delete " + subvolume_path;
+		if (TWFunc::Exec_Cmd(command) != 0) {
+			  LOGERR("Unable to delete subvolume for '%s'.\n", Mount_Point.c_str());
+			  UnMount(true);
+			  if (wasMounted) Mount(true);
+			  return false;
+		}
+	}
+	
+	// Create subvolume
+	gui_print("Creating subvolume for %s ...\n", Display_Name.c_str());
+	command = "btrfs subvolume create " + subvolume_path;
+	if (TWFunc::Exec_Cmd(command) != 0) {
+		  LOGERR("Unable to create subvolume for '%s'.\n", Mount_Point.c_str());
+		  UnMount(true);
+		  if (wasMounted) Mount(true);
+		  return false;
+	}
+	
+	// Create folder __snapshot
+	if (!TWFunc::Path_Exists(Mount_Point + "/__snapshot")) {
+		gui_print("Creating snapshot folder for %s ...\n", Display_Name.c_str());
+		if (mkdir((Mount_Point + "/__snapshot").c_str(), 0755) != 0) {
+			  LOGERR("Unable to create snapshot folder for '%s'.\n", Mount_Point.c_str());
+			  UnMount(true);
+			  if (wasMounted) Mount(true);
+			  return false;
+		}
+	}
+	
+	// Umount
+	if (!UnMount(true))
+		return false;
+	
+	// Recreate_AndSec_Folder
+	Recreate_AndSec_Folder();
+	
+	// remount ?
+	if (wasMounted) Mount(true);
+	
+	gui_print("Done.\n");
+	return true;
+	
+}
+
 bool TWPartition::Wipe_Data_Without_Wiping_Media() {
 #ifdef TW_OEM_BUILD
 	// In an OEM Build we want to do a full format
@@ -1980,6 +2104,79 @@ bool TWPartition::Backup_Dump_Image(string backup_folder) {
 	return true;
 }
 
+bool TWPartition::Backup_Snapshot(string backup_folder) {
+	char back_name[255];
+	string Full_FileName, Snapshot_Full_FileName, Command, subvolume, subvolume_path, snapshot_path;
+	bool wasMounted = Is_Mounted();
+
+	TWFunc::GUI_Operation_Text(TW_BACKUP_TEXT, Display_Name, "Backing Up");
+	gui_print("Backing up %s...\n", Display_Name.c_str());
+	
+	if (Current_File_System == "btrfs") {
+		subvolume = Mount_Point.substr(1, Mount_Point.size() - 1);
+		subvolume_path = "/" + subvolume + "/" + subvolume;
+		snapshot_path = "/" + subvolume + "/__snapshot" + backup_folder;
+		sprintf(back_name, "%s.%s.sna", Backup_Name.c_str(), Current_File_System.c_str());
+		Backup_FileName = back_name;
+		Full_FileName = backup_folder + "/" + Backup_FileName;
+		Snapshot_Full_FileName = snapshot_path + "/" + Backup_FileName;
+		
+		if (!TWFunc::Path_Exists("/sbin/btrfs")) {
+			LOGERR("/sbin/btrfs not found.\n");
+			return false;
+		}
+		
+		if (!UnMount(true))
+			return false;
+		
+		if (!Mount_Root(true)) {
+			if (wasMounted) Mount(true);
+			return false;
+		}
+		
+		if (!TWFunc::Recursive_Mkdir(snapshot_path)) {
+			LOGERR("Failed to make backup folder.\n");
+			UnMount(true);
+			if (wasMounted) Mount(true);
+			return false;
+		}
+		
+		//Create an empty file on the backup folder that will permit to know that a snapshot exist
+		FILE *fp = fopen(Full_FileName.c_str(), "w");
+		if (fp == NULL) {
+			LOGERR("Unable to open '%s'.\n", Full_FileName.c_str());
+			UnMount(true);
+			if (wasMounted) Mount(true);
+			return false;
+		}
+		fclose(fp);
+		
+		Command = "btrfs subvolume snapshot " + subvolume_path + " " + Snapshot_Full_FileName;
+		LOGINFO("Backup command: '%s'\n", Command.c_str());
+		
+		if (TWFunc::Exec_Cmd(Command) != 0) {
+			LOGERR("Unable to create snapshot for '%s'.\n", Mount_Point.c_str());
+			unlink(Full_FileName.c_str());
+			UnMount(true);
+			if (wasMounted) Mount(true);
+			return false;
+		}
+		
+		if (!UnMount(true))
+			return false;
+		
+		if (wasMounted) Mount(true);
+		
+	} else {
+		LOGERR("Backup with snapshot not supported.\n");
+		return false;
+	}
+
+	tw_set_default_metadata(Full_FileName.c_str());
+
+	return true;
+}
+
 unsigned long long TWPartition::Get_Restore_Size(string restore_folder) {
 	InfoManager restore_info(restore_folder + "/" + Backup_Name + ".info");
 	if (restore_info.LoadValues() == 0) {
@@ -2092,6 +2289,73 @@ bool TWPartition::Restore_Image(string restore_folder, const unsigned long long 
 		if (!Flash_Image_FI(Full_FileName))
 			return false;
 	}
+	display_percent = (double)(Restore_Size + *already_restored_size) / (double)(*total_restore_size) * 100;
+	sprintf(size_progress, "%lluMB of %lluMB, %i%%", (Restore_Size + *already_restored_size) / 1048576, *total_restore_size / 1048576, (int)(display_percent));
+	DataManager::SetValue("tw_size_progress", size_progress);
+	progress_percent = (display_percent / 100);
+	DataManager::SetProgress((float)(progress_percent));
+	*already_restored_size += Restore_Size;
+	return true;
+}
+
+bool TWPartition::Restore_Snapshot(string restore_folder, string Restore_File_System, const unsigned long long *total_restore_size, unsigned long long *already_restored_size) {
+	string Snapshot_Full_FileName, Command, subvolume, subvolume_path, snapshot_path;
+	double display_percent, progress_percent;
+	char size_progress[1024];
+	bool wasMounted = Is_Mounted();
+
+	TWFunc::GUI_Operation_Text(TW_RESTORE_TEXT, Display_Name, "Restoring");
+	
+	if (Current_File_System == "btrfs" && Restore_File_System == "btrfs") {
+		subvolume = Mount_Point.substr(1, Mount_Point.size() - 1);
+		subvolume_path = "/" + subvolume + "/" + subvolume;
+		snapshot_path = "/" + subvolume + "/__snapshot" + restore_folder;
+		Snapshot_Full_FileName = snapshot_path + "/" + Backup_FileName;
+		
+		if (!TWFunc::Path_Exists("/sbin/btrfs")) {
+			LOGERR("/sbin/btrfs not found.\n");
+			return false;
+		}
+		
+		if (!UnMount(true))
+			return false;
+		
+		if (!Mount_Root(true)) {
+			if (wasMounted) Mount(true);
+			return false;
+		}
+		
+		// Delete subvolume
+		if (TWFunc::Path_Exists(subvolume_path)) {
+			gui_print("Deleting subvolume for %s ...\n", Display_Name.c_str());
+			Command = "btrfs subvolume delete " + subvolume_path;
+			if (TWFunc::Exec_Cmd(Command) != 0) {
+				  LOGERR("Unable to delete subvolume for '%s'.\n", Mount_Point.c_str());
+				  UnMount(true);
+				  if (wasMounted) Mount(true);
+				  return false;
+			}
+		}
+		
+		gui_print("Restoring subvolume for %s ...\n", Display_Name.c_str());
+		Command = "btrfs subvolume snapshot " + Snapshot_Full_FileName + " " + subvolume_path;
+		if (TWFunc::Exec_Cmd(Command) != 0) {
+			LOGERR("Unable to restore snapshot for '%s'.\n", Mount_Point.c_str());
+			UnMount(true);
+			if (wasMounted) Mount(true);
+			return false;
+		}
+		
+		if (!UnMount(true))
+			return false;
+		
+		if (wasMounted) Mount(true);
+		
+	} else {
+		LOGERR("Restore with snapshot not supported by the filesystem. Your backup is maybe not usable anymore!\n");
+		return false;
+	}
+	
 	display_percent = (double)(Restore_Size + *already_restored_size) / (double)(*total_restore_size) * 100;
 	sprintf(size_progress, "%lluMB of %lluMB, %i%%", (Restore_Size + *already_restored_size) / 1048576, *total_restore_size / 1048576, (int)(display_percent));
 	DataManager::SetValue("tw_size_progress", size_progress);
@@ -2326,4 +2590,152 @@ int TWPartition::Check_Lifetime_Writes() {
 	}
 	Mount_Read_Only = original_read_only;
 	return ret;
+}
+
+bool TWPartition::Clean_Backup(string backup_folder) {
+	string Restore_File_System;
+
+	LOGINFO("Backup filename is: %s\n", Backup_FileName.c_str());
+
+	Restore_File_System = Get_Restore_File_System(backup_folder);
+
+	if (Is_File_System(Restore_File_System)) {
+		if (Backup_FileName.substr(Backup_FileName.size()-4,4) == ".sna")
+			return Clean_Backup_Snapshot(backup_folder);
+	}
+
+	return true;
+}
+
+bool TWPartition::Clean_Backup_Snapshot(string backup_folder) {
+	string Snapshot_Full_FileName, Command, subvolume, snapshot_path;
+	bool wasMounted = Is_Mounted();
+
+	Snapshot_Full_FileName = backup_folder + "/" + Backup_FileName;
+	
+	if (Current_File_System == "btrfs") {
+		subvolume = Mount_Point.substr(1, Mount_Point.size() - 1);
+		snapshot_path = "/" + subvolume + "/__snapshot" + backup_folder;
+		Snapshot_Full_FileName = snapshot_path + "/" + Backup_FileName;
+		
+		if (!TWFunc::Path_Exists("/sbin/btrfs")) {
+			LOGERR("/sbin/btrfs not found.\n");
+			return false;
+		}
+		
+		if (!UnMount(true))
+			return false;
+		
+		if (!Mount_Root(true)) {
+			if (wasMounted) Mount(true);
+			return false;
+		}
+		
+		// Delete subvolume
+		if (TWFunc::Path_Exists(Snapshot_Full_FileName)) {
+			gui_print("Deleting snapshot for %s ...\n", Display_Name.c_str());
+			Command = "btrfs subvolume delete " + Snapshot_Full_FileName;
+			if (TWFunc::Exec_Cmd(Command) != 0) {
+				  LOGERR("Unable to delete snapshot for '%s'.\n", Mount_Point.c_str());
+				  UnMount(true);
+				  if (wasMounted) Mount(true);
+				  return false;
+			}
+		}
+		
+		// If the folder is empty, delete it
+		DIR* d;
+		struct dirent *p;
+		d = opendir(snapshot_path.c_str());
+		if (d != NULL) {
+			while ((p = readdir(d))) {
+				if (!strcmp(p->d_name, ".") || !strcmp(p->d_name, ".."))
+					continue;
+				
+				break;
+			}
+			
+			if (p == NULL) {
+				closedir(d);
+				rmdir(snapshot_path.c_str());
+			} else {
+				closedir(d);
+			}
+		}
+		
+		if (!UnMount(true))
+			return false;
+		
+		if (wasMounted) Mount(true);
+		
+	} else {
+		LOGERR("Snapshot not supported by the filesystem.\n");
+		return false;
+	}
+	
+	return true;
+}
+
+bool TWPartition::Rename_Backup(string Backup_Folder, string Rename_Backup_Folder) {
+	string Restore_File_System;
+
+	LOGINFO("Backup filename is: %s\n", Backup_FileName.c_str());
+
+	Restore_File_System = Get_Restore_File_System(Backup_Folder);
+
+	if (Is_File_System(Restore_File_System)) {
+		if (Backup_FileName.substr(Backup_FileName.size()-4,4) == ".sna")
+			return Rename_Backup_Snapshot(Backup_Folder, Rename_Backup_Folder);
+	}
+
+	return true;
+}
+
+bool TWPartition::Rename_Backup_Snapshot(string Backup_Folder, string Rename_Backup_Folder) {
+	string Snapshot_Backup_Folder, Snapshot_Rename_Backup_Folder, subvolume, snapshot_path;
+	int rc = 0;
+	bool wasMounted = Is_Mounted();
+	
+	if (Current_File_System == "btrfs") {
+		subvolume = Mount_Point.substr(1, Mount_Point.size() - 1);
+		snapshot_path = "/" + subvolume + "/__snapshot";
+		Snapshot_Backup_Folder = snapshot_path + Backup_Folder;
+		Snapshot_Rename_Backup_Folder = snapshot_path + Rename_Backup_Folder;
+		
+		if (!UnMount(true))
+			return false;
+		
+		if (!Mount_Root(true)) {
+			if (wasMounted) Mount(true);
+			return false;
+		}
+		
+		// Rename backup
+		if (TWFunc::Path_Exists(Snapshot_Backup_Folder)) {
+			rc = rename(Snapshot_Backup_Folder.c_str(), Snapshot_Rename_Backup_Folder.c_str());
+			if (rc != 0) {
+				UnMount(true);
+				if (wasMounted) Mount(true);
+				return false;
+			}
+		} else if (TWFunc::Path_Exists(Snapshot_Rename_Backup_Folder)) {
+			// Nothing todo. btrfs can handle multiple subvolumes so it is possible that TWRP already requested
+			// to rename this folder for another mounting point that used the same root mount point than this one.
+		} else {
+			UnMount(true);
+			if (wasMounted) Mount(true);
+			return false;
+		}
+		
+		if (!UnMount(true))
+			return false;
+		
+		if (wasMounted) Mount(true);
+		
+	} else {
+		LOGERR("Snapshot not supported by the filesystem! Your backup is maybe lost!\n");
+		return false;
+	}
+	
+	return true;
 }

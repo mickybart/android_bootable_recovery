@@ -362,6 +362,8 @@ protected:
 	int cancelbackup(std::string arg);
 	int checkpartitionlifetimewrites(std::string arg);
 	int mountsystemtoggle(std::string arg);
+	int deletebackup(std::string arg);
+	int renamebackup(std::string arg);
 
 	int simulate;
 };

@@ -316,6 +316,8 @@ void TWPartitionManager::Output_Partition(TWPartition* Part) {
 	printf("   Backup_Method: %s\n", back_meth.c_str());
 	if (Part->Mount_Flags || !Part->Mount_Options.empty())
 		printf("   Mount_Flags=0x%8x, Mount_Options=%s\n", Part->Mount_Flags, Part->Mount_Options.c_str());
+	if (Part->Root_Mount_Flags || !Part->Root_Mount_Options.empty())
+		printf("   Root_Mount_Flags=0x%8x, Root_Mount_Options=%s\n", Part->Root_Mount_Flags, Part->Root_Mount_Options.c_str());
 	if (Part->MTP_Storage_ID)
 		printf("   MTP_Storage_ID: %i\n", Part->MTP_Storage_ID);
 	printf("\n");
@@ -551,6 +553,7 @@ bool TWPartitionManager::Backup_Partition(TWPartition* Part, string Backup_Folde
 				if ((*subpart)->Can_Be_Backed_Up && (*subpart)->Is_SubPartition && (*subpart)->SubPartition_Of == Part->Mount_Point) {
 					if (!(*subpart)->Backup(Backup_Folder, &total_size, &current_size, tar_fork_pid)) {
 						TWFunc::SetPerformanceMode(false);
+						gui_print("Backup Failed.\n");
 						Clean_Backup_Folder(Backup_Folder);
 						TWFunc::copy_file("/tmp/recovery.log", backup_log, 0644);
 						tw_set_default_metadata(backup_log.c_str());
@@ -588,6 +591,7 @@ bool TWPartitionManager::Backup_Partition(TWPartition* Part, string Backup_Folde
 		TWFunc::SetPerformanceMode(false);
 		return md5Success;
 	} else {
+		gui_print("Backup Failed.\n");
 		Clean_Backup_Folder(Backup_Folder);
 		TWFunc::copy_file("/tmp/recovery.log", backup_log, 0644);
 		tw_set_default_metadata(backup_log.c_str());
@@ -602,7 +606,7 @@ void TWPartitionManager::Clean_Backup_Folder(string Backup_Folder) {
 	struct dirent *p;
 	int r;
 
-	gui_print("Backup Failed.\nCleaning Backup Folder\n");
+	gui_print("Cleaning Backup Folder...\n");
 
 	if (d == NULL) {
 		LOGERR("Error opening dir: '%s'\n", Backup_Folder.c_str());
@@ -617,6 +621,28 @@ void TWPartitionManager::Clean_Backup_Folder(string Backup_Folder) {
 
 		size_t dot = path.find_last_of(".") + 1;
 		if (path.substr(dot) == "win" || path.substr(dot) == "md5" || path.substr(dot) == "info") {
+			r = unlink(path.c_str());
+			if (r != 0) {
+				LOGINFO("Unable to unlink '%s: %s'\n", path.c_str(), strerror(errno));
+			}
+		} else if (path.substr(dot) == "sna") {
+			string label = p->d_name;
+			size_t found = label.find_first_of(".");
+			TWPartition* Part = NULL;
+			
+			if (found != string::npos) {
+				label.resize(found);
+				Part = Find_Partition_By_Path(label);
+			}
+			
+			if (Part == NULL)
+			{
+				LOGERR(" Unable to locate partition by backup name: '%s'\n", label.c_str());
+				continue;
+			}
+
+			Part->Clean_Backup(Backup_Folder);
+			
 			r = unlink(path.c_str());
 			if (r != 0) {
 				LOGINFO("Unable to unlink '%s: %s'\n", path.c_str(), strerror(errno));
@@ -647,6 +673,74 @@ int TWPartitionManager::Cancel_Backup() {
 	}
 
 	return 0;
+}
+
+bool TWPartitionManager::Delete_Backup_Folder(string Backup_Folder) {
+	gui_print("Deleting Backup...\n");
+	
+	// Clean backup folder
+	LOGINFO("Cleaning directory %s\n", Backup_Folder.c_str());
+	Clean_Backup_Folder(Backup_Folder);
+	
+	// Delete the folder (some files can stay on this folder but we will force a delete)
+	LOGINFO("Removing directory %s\n", Backup_Folder.c_str());
+	TWFunc::removeDir(Backup_Folder, false);
+	
+	gui_print("Done.\n");
+	return true;
+}
+
+bool TWPartitionManager::Rename_Backup_Folder(string Backup_Folder, string Rename_Backup_Folder) {
+	gui_print("Renaming Backup...\n");
+	
+	// Rename snapshots
+	DIR *d = opendir(Backup_Folder.c_str());
+	struct dirent *p;
+	int r;
+
+	if (d == NULL) {
+		LOGERR("Error opening dir: '%s'\n", Backup_Folder.c_str());
+		return false;
+	}
+
+	while ((p = readdir(d))) {
+		if (!strcmp(p->d_name, ".") || !strcmp(p->d_name, ".."))
+			continue;
+
+		string path = Backup_Folder + p->d_name;
+
+		size_t dot = path.find_last_of(".") + 1;
+		if (path.substr(dot) == "sna") {
+			string label = p->d_name;
+			size_t found = label.find_first_of(".");
+			TWPartition* Part = NULL;
+			
+			if (found != string::npos) {
+				label.resize(found);
+				Part = Find_Partition_By_Path(label);
+			}
+			
+			if (Part == NULL)
+			{
+				LOGERR(" Unable to locate partition by backup name: '%s'\n", label.c_str());
+				continue;
+			}
+
+			Part->Rename_Backup(Backup_Folder, Rename_Backup_Folder);
+		}
+	}
+	closedir(d);
+	
+	// Rename the backup folder
+	r = rename(Backup_Folder.c_str(), Rename_Backup_Folder.c_str());
+	
+	if (r != 0) {
+		gui_print("Failed to rename.\n");
+		return false;
+	}
+	
+	gui_print("Done.\n");
+	return true;
 }
 
 int TWPartitionManager::Run_Backup(void) {
@@ -1004,7 +1098,7 @@ void TWPartitionManager::Set_Restore_Files(string Restore_Name) {
 		if (fstype == NULL || extn == NULL || strcmp(fstype, "log") == 0) continue;
 		int extnlength = strlen(extn);
 		if (extnlength != 3 && extnlength != 6) continue;
-		if (extnlength >= 3 && strncmp(extn, "win", 3) != 0) continue;
+		if (extnlength >= 3 && strncmp(extn, "win", 3) != 0 && strncmp(extn, "sna", 3) != 0) continue;
 		//if (extnlength == 6 && strncmp(extn, "win000", 6) != 0) continue;
 
 		if (check_encryption) {
@@ -1025,7 +1119,7 @@ void TWPartitionManager::Set_Restore_Files(string Restore_Name) {
 		}
 
 		Part->Backup_FileName = de->d_name;
-		if (strlen(extn) > 3) {
+		if (extnlength > 3) {
 			Part->Backup_FileName.resize(Part->Backup_FileName.size() - strlen(extn) + 3);
 		}
 

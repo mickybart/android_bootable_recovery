@@ -226,6 +226,8 @@ GUIAction::GUIAction(xml_node<>* node)
 		ADD_ACTION(resize);
 		ADD_ACTION(changefilesystem);
 		ADD_ACTION(flashimage);
+		ADD_ACTION(deletebackup);
+		ADD_ACTION(renamebackup);
 	}
 
 	// First, get the action
@@ -1818,6 +1820,51 @@ int GUIAction::mountsystemtoggle(std::string arg)
 			op_status = 0; // success
 		} else {
 			op_status = 1; // fail
+		}
+	}
+
+	operation_end(op_status);
+	return 0;
+}
+
+int GUIAction::deletebackup(std::string arg)
+{
+	int op_status = 0;
+
+	operation_start("Delete Backup");
+	if (simulate) {
+		simulate_progress_bar();
+	} else {
+		if (!PartitionManager.Delete_Backup_Folder(arg))
+			op_status = 1;
+	}
+
+	operation_end(op_status);
+	return 0;
+}
+
+int GUIAction::renamebackup(std::string arg)
+{
+	int op_status = 0;
+
+	operation_start("Rename Backup");
+	if (simulate) {
+		simulate_progress_bar();
+	} else {
+		string backups_folder;
+		string restore_name;
+		string backup_rename;
+		
+		std::vector<std::string> args = TWFunc::Split_String(arg, ",");
+		if (args.size() == 3) {
+			backups_folder = args[0];
+			restore_name = args[1];
+			backup_rename = args[2];
+			
+			if (!PartitionManager.Rename_Backup_Folder(backups_folder + "/" + restore_name, backups_folder + "/" + backup_rename))
+				op_status = 1;
+		} else {
+			op_status = 1;
 		}
 	}
 
