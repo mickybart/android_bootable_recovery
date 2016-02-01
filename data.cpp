@@ -1011,7 +1011,10 @@ int DataManager::GetMagicValue(const string varName, string& value)
 		if (curTime.tv_sec > nextSecCheck)
 		{
 			char cap_s[4];
-#ifdef TW_CUSTOM_BATTERY_PATH
+#ifdef TW_CUSTOM_BATTERY_CAPACITY_PATH
+                        string capacity_file = EXPAND(TW_CUSTOM_BATTERY_CAPACITY_PATH);
+                        FILE * cap = fopen(capacity_file.c_str(),"rt");
+#elif defined(TW_CUSTOM_BATTERY_PATH)
 			string capacity_file = EXPAND(TW_CUSTOM_BATTERY_PATH);
 			capacity_file += "/capacity";
 			FILE * cap = fopen(capacity_file.c_str(),"rt");
@@ -1025,7 +1028,10 @@ int DataManager::GetMagicValue(const string varName, string& value)
 				if (lastVal > 100)	lastVal = 101;
 				if (lastVal < 0)	lastVal = 0;
 			}
-#ifdef TW_CUSTOM_BATTERY_PATH
+#ifdef TW_CUSTOM_BATTERY_STATUS_PATH
+                        string status_file = EXPAND(TW_CUSTOM_BATTERY_STATUS_PATH);
+                        cap = fopen(status_file.c_str(),"rt");
+#elif defined(TW_CUSTOM_BATTERY_PATH)
 			string status_file = EXPAND(TW_CUSTOM_BATTERY_PATH);
 			status_file += "/status";
 			cap = fopen(status_file.c_str(),"rt");
