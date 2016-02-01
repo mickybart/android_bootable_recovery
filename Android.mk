@@ -42,7 +42,7 @@ TARGET_RECOVERY_GUI := true
 
 LOCAL_SRC_FILES := \
     twrp.cpp \
-    fixPermissions.cpp \
+    fixContexts.cpp \
     twrpTar.cpp \
     twrpDU.cpp \
     twrpDigest.cpp \
@@ -284,7 +284,7 @@ ifeq ($(TW_INCLUDE_L_CRYPTO), true)
 endif
 ifeq ($(TW_INCLUDE_CRYPTO), true)
     LOCAL_CFLAGS += -DTW_INCLUDE_CRYPTO
-    LOCAL_SHARED_LIBRARIES += libcryptfslollipop
+    LOCAL_SHARED_LIBRARIES += libcryptfslollipop libgpt_twrp
     LOCAL_C_INCLUDES += external/boringssl/src/include
 endif
 ifeq ($(TW_USE_MODEL_HARDWARE_ID_FOR_DEVICE_ID), true)
@@ -342,7 +342,6 @@ LOCAL_ADDITIONAL_DEPENDENCIES := \
     dump_image \
     erase_image \
     flash_image \
-    fix_permissions.sh \
     mke2fs.conf \
     pigz \
     teamwin \
@@ -369,12 +368,22 @@ else
     ifneq ($(wildcard external/toybox/Android.mk),)
         LOCAL_ADDITIONAL_DEPENDENCIES += toybox_symlinks
     endif
+    ifneq ($(wildcard external/zip/Android.mk),)
+        LOCAL_ADDITIONAL_DEPENDENCIES += zip
+    endif
+    ifneq ($(wildcard external/unzip/Android.mk),)
+        LOCAL_ADDITIONAL_DEPENDENCIES += unzip
+    endif
 endif
 ifneq ($(TW_NO_EXFAT), true)
     LOCAL_ADDITIONAL_DEPENDENCIES += mkexfatfs fsckexfat
 endif
 ifeq ($(BOARD_HAS_NO_REAL_SDCARD),)
-    LOCAL_ADDITIONAL_DEPENDENCIES += parted
+    ifeq ($(shell test $(PLATFORM_SDK_VERSION) -gt 22; echo $$?),0)
+        LOCAL_ADDITIONAL_DEPENDENCIES += sgdisk
+    else
+        LOCAL_ADDITIONAL_DEPENDENCIES += sgdisk_static
+    endif
 endif
 ifneq ($(TW_EXCLUDE_ENCRYPTED_BACKUPS), true)
     LOCAL_ADDITIONAL_DEPENDENCIES += openaes ../openaes/LICENSE
@@ -386,7 +395,15 @@ ifeq ($(TW_INCLUDE_DUMLOCK), true)
 endif
 ifneq ($(TW_EXCLUDE_SUPERSU), true)
     LOCAL_ADDITIONAL_DEPENDENCIES += \
-        su install-recovery.sh 99SuperSUDaemon Superuser.apk
+        install-recovery.sh 99SuperSUDaemon Superuser.apk
+    ifeq ($(TARGET_ARCH), arm)
+        LOCAL_ADDITIONAL_DEPENDENCIES += \
+            chattr.pie libsupol.so suarm supolicy
+    endif
+    ifeq ($(TARGET_ARCH), arm64)
+        LOCAL_ADDITIONAL_DEPENDENCIES += \
+            libsupol.soarm64 suarm64 supolicyarm64
+    endif
 endif
 ifneq ($(TW_NO_EXFAT_FUSE), true)
     LOCAL_ADDITIONAL_DEPENDENCIES += exfat-fuse
@@ -574,6 +591,7 @@ include $(commands_recovery_local_path)/injecttwrp/Android.mk \
 ifeq ($(TW_INCLUDE_CRYPTO), true)
     include $(commands_recovery_local_path)/crypto/lollipop/Android.mk
     include $(commands_recovery_local_path)/crypto/scrypt/Android.mk
+    include $(commands_recovery_local_path)/gpt/Android.mk
 endif
 ifeq ($(BUILD_ID), GINGERBREAD)
     TW_NO_EXFAT := true

@@ -409,7 +409,7 @@ int TWFunc::Recursive_Mkdir(string Path) {
 		cur_path += "/" + parts[i];
 		if (!TWFunc::Path_Exists(cur_path)) {
 			if (mkdir(cur_path.c_str(), 0777)) {
-				gui_msg(Msg(msg::kError, "create_folder_strerr=Can not create '{1}' folder ({2})")(cur_path)(strerror(errno)));
+				gui_msg(Msg(msg::kError, "create_folder_strerr=Can not create '{1}' folder ({2}).")(cur_path)(strerror(errno)));
 				return false;
 			} else {
 				tw_set_default_metadata(cur_path.c_str());
@@ -995,20 +995,19 @@ bool TWFunc::Create_Dir_Recursive(const std::string& path, mode_t mode, uid_t ui
 
 int TWFunc::Set_Brightness(std::string brightness_value)
 {
+	int result = -1;
+	std::string secondary_brightness_file;
 
-	std::string brightness_file = DataManager::GetStrValue("tw_brightness_file");;
-
-	if (brightness_file.compare("/nobrightness") != 0) {
-		std::string secondary_brightness_file = DataManager::GetStrValue("tw_secondary_brightness_file");
+	if (DataManager::GetIntValue("tw_has_brightnesss_file")) {
 		LOGINFO("TWFunc::Set_Brightness: Setting brightness control to %s\n", brightness_value.c_str());
-		int result = TWFunc::write_file(brightness_file, brightness_value);
-		if (secondary_brightness_file != "") {
-			LOGINFO("TWFunc::Set_Brightness: Setting SECONDARY brightness control to %s\n", brightness_value.c_str());
+		result = TWFunc::write_file(DataManager::GetStrValue("tw_brightness_file"), brightness_value);
+		DataManager::GetValue("tw_secondary_brightness_file", secondary_brightness_file);
+		if (!secondary_brightness_file.empty()) {
+			LOGINFO("TWFunc::Set_Brightness: Setting secondary brightness control to %s\n", brightness_value.c_str());
 			TWFunc::write_file(secondary_brightness_file, brightness_value);
 		}
-		return result;
 	}
-	return -1;
+	return result;
 }
 
 bool TWFunc::Toggle_MTP(bool enable) {
@@ -1055,6 +1054,25 @@ void TWFunc::Disable_Stock_Recovery_Replace(void) {
 		}
 		PartitionManager.UnMount_By_Path("/system", false);
 	}
+}
+
+unsigned long long TWFunc::IOCTL_Get_Block_Size(const char* block_device) {
+	unsigned long block_device_size;
+	int ret = 0;
+
+	int fd = open(block_device, O_RDONLY);
+	if (fd < 0) {
+		LOGINFO("Find_Partition_Size: Failed to open '%s', (%s)\n", block_device, strerror(errno));
+	} else {
+		ret = ioctl(fd, BLKGETSIZE, &block_device_size);
+		close(fd);
+		if (ret) {
+			LOGINFO("Find_Partition_Size: ioctl error: (%s)\n", strerror(errno));
+		} else {
+			return (unsigned long long)(block_device_size) * 512LLU;
+		}
+	}
+	return 0;
 }
 
 #endif // ndef BUILD_TWRPTAR_MAIN

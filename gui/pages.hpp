@@ -91,7 +91,7 @@ public:
 
 public:
 	int LoadLanguage(char* languageFile, ZipArchive* package);
-	int Load(ZipArchive* package, char* xmlFile, char* languageFile);
+	int Load(ZipArchive* package, char* xmlFile, char* languageFile, char* baseLanguageFile);
 	int CheckInclude(ZipArchive* package, xml_document<> *parentDoc);
 
 	Page* FindPage(std::string name);
@@ -140,6 +140,7 @@ public:
 	static void ReleasePackage(std::string name);
 	static int RunReload();
 	static void RequestReload();
+	static void SetStartPage(const std::string& page_name);
 
 	// Used for actions and pages
 	static int ChangePage(std::string name);
@@ -177,7 +178,6 @@ protected:
 protected:
 	static std::map<std::string, PageSet*> mPageSets;
 	static PageSet* mCurrentSet;
-	static PageSet* mBaseSet;
 	static MouseCursor *mMouseCursor;
 	static HardwareKeyboard *mHardwareKeyboard;
 	static bool mReloadTheme;

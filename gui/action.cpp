@@ -43,15 +43,16 @@
 #include "../adb_install.h"
 #include "../fuse_sideload.h"
 #include "blanktimer.hpp"
+
 extern "C" {
 #include "../twcommon.h"
-#include "../minuitwrp/minui.h"
 #include "../variables.h"
 #include "../twinstall.h"
 #include "cutils/properties.h"
 #include "../adb_install.h"
 #include "../set_metadata.h"
 };
+#include "../minuitwrp/minui.h"
 
 #include "rapidxml.hpp"
 #include "objects.hpp"
@@ -208,6 +209,7 @@ GUIAction::GUIAction(xml_node<>* node)
 		ADD_ACTION(wipe);
 		ADD_ACTION(refreshsizes);
 		ADD_ACTION(nandroid);
+		ADD_ACTION(fixcontexts);
 		ADD_ACTION(fixpermissions);
 		ADD_ACTION(dd);
 		ADD_ACTION(partitionsd);
@@ -304,8 +306,10 @@ int GUIAction::NotifyKey(int key, bool down)
 	// Else, check if all buttons are pressed, then consume their release events
 	// so they don't trigger one-button actions and reset mKeys pressed status
 	if(mKeys.size() == 1) {
-		if(!down && prevState)
+		if(!down && prevState) {
 			doActions();
+			return 0;
+		}
 	} else if(down) {
 		for(itr = mKeys.begin(); itr != mKeys.end(); ++itr) {
 			if(!itr->second)
@@ -320,9 +324,10 @@ int GUIAction::NotifyKey(int key, bool down)
 		}
 
 		doActions();
+		return 0;
 	}
 
-	return 0;
+	return 1;
 }
 
 int GUIAction::NotifyVarChange(const std::string& varName, const std::string& value)
@@ -344,7 +349,7 @@ void GUIAction::simulate_progress_bar(void)
 	{
 		if (PartitionManager.stop_backup.get_value()) {
 			DataManager::SetValue("tw_cancel_backup", 1);
-			gui_msg("backup_cancel=Backup Canceled.");
+			gui_msg("backup_cancel=Backup Cancelled");
 			DataManager::SetValue("ui_progress", 0);
 			PartitionManager.stop_backup.set_value(0);
 			return;
@@ -366,8 +371,15 @@ int GUIAction::flash_zip(std::string filename, int* wipe_cache)
 		return -1;
 	}
 
-	if (!PartitionManager.Mount_By_Path(filename, true))
-		return -1;
+	if (!TWFunc::Path_Exists(filename)) {
+		if (!PartitionManager.Mount_By_Path(filename, true)) {
+			return -1;
+		}
+		if (!TWFunc::Path_Exists(filename)) {
+			gui_msg(Msg(msg::kError, "unable_to_locate=Unable to locate {1}.")(filename));
+			return -1;
+		}
+	}
 
 	if (simulate) {
 		simulate_progress_bar();
@@ -792,25 +804,27 @@ int GUIAction::generatebackupname(std::string arg __unused)
 	return 0;
 }
 
-int GUIAction::checkpartitionlist(std::string arg __unused)
+int GUIAction::checkpartitionlist(std::string arg)
 {
-	string Wipe_List, wipe_path;
+	string List, part_path;
 	int count = 0;
 
-	DataManager::GetValue("tw_wipe_list", Wipe_List);
-	LOGINFO("checkpartitionlist list '%s'\n", Wipe_List.c_str());
-	if (!Wipe_List.empty()) {
-		size_t start_pos = 0, end_pos = Wipe_List.find(";", start_pos);
-		while (end_pos != string::npos && start_pos < Wipe_List.size()) {
-			wipe_path = Wipe_List.substr(start_pos, end_pos - start_pos);
-			LOGINFO("checkpartitionlist wipe_path '%s'\n", wipe_path.c_str());
-			if (wipe_path == "/and-sec" || wipe_path == "DALVIK" || wipe_path == "INTERNAL") {
+	if (arg.empty())
+		arg = "tw_wipe_list";
+	DataManager::GetValue(arg, List);
+	LOGINFO("checkpartitionlist list '%s'\n", List.c_str());
+	if (!List.empty()) {
+		size_t start_pos = 0, end_pos = List.find(";", start_pos);
+		while (end_pos != string::npos && start_pos < List.size()) {
+			part_path = List.substr(start_pos, end_pos - start_pos);
+			LOGINFO("checkpartitionlist part_path '%s'\n", part_path.c_str());
+			if (part_path == "/and-sec" || part_path == "DALVIK" || part_path == "INTERNAL") {
 				// Do nothing
 			} else {
 				count++;
 			}
 			start_pos = end_pos + 1;
-			end_pos = Wipe_List.find(";", start_pos);
+			end_pos = List.find(";", start_pos);
 		}
 		DataManager::SetValue("tw_check_partition_list", count);
 	} else {
@@ -819,29 +833,32 @@ int GUIAction::checkpartitionlist(std::string arg __unused)
 		return 0;
 }
 
-int GUIAction::getpartitiondetails(std::string arg __unused)
+int GUIAction::getpartitiondetails(std::string arg)
 {
-	string Wipe_List, wipe_path;
+	string List, part_path;
 	int count = 0;
 
-	DataManager::GetValue("tw_wipe_list", Wipe_List);
-	LOGINFO("getpartitiondetails list '%s'\n", Wipe_List.c_str());
-	if (!Wipe_List.empty()) {
-		size_t start_pos = 0, end_pos = Wipe_List.find(";", start_pos);
-		while (end_pos != string::npos && start_pos < Wipe_List.size()) {
-			wipe_path = Wipe_List.substr(start_pos, end_pos - start_pos);
-			LOGINFO("getpartitiondetails wipe_path '%s'\n", wipe_path.c_str());
-			if (wipe_path == "/and-sec" || wipe_path == "DALVIK" || wipe_path == "INTERNAL") {
+	if (arg.empty())
+		arg = "tw_wipe_list";
+	DataManager::GetValue(arg, List);
+	LOGINFO("getpartitiondetails list '%s'\n", List.c_str());
+	if (!List.empty()) {
+		size_t start_pos = 0, end_pos = List.find(";", start_pos);
+		part_path = List;
+		while (end_pos != string::npos && start_pos < List.size()) {
+			part_path = List.substr(start_pos, end_pos - start_pos);
+			LOGINFO("getpartitiondetails part_path '%s'\n", part_path.c_str());
+			if (part_path == "/and-sec" || part_path == "DALVIK" || part_path == "INTERNAL") {
 				// Do nothing
 			} else {
-				DataManager::SetValue("tw_partition_path", wipe_path);
+				DataManager::SetValue("tw_partition_path", part_path);
 				break;
 			}
 			start_pos = end_pos + 1;
-			end_pos = Wipe_List.find(";", start_pos);
+			end_pos = List.find(";", start_pos);
 		}
-		if (!wipe_path.empty()) {
-			TWPartition* Part = PartitionManager.Find_Partition_By_Path(wipe_path);
+		if (!part_path.empty()) {
+			TWPartition* Part = PartitionManager.Find_Partition_By_Path(part_path);
 			if (Part) {
 				unsigned long long mb = 1048576;
 
@@ -881,12 +898,14 @@ int GUIAction::getpartitiondetails(std::string arg __unused)
 					DataManager::SetValue("tw_partition_ext", 0);
 				return 0;
 			} else {
-				LOGERR("Unable to locate partition: '%s'\n", wipe_path.c_str());
+				LOGERR("Unable to locate partition: '%s'\n", part_path.c_str());
 			}
 		}
 	}
 	DataManager::SetValue("tw_partition_name", "");
 	DataManager::SetValue("tw_partition_file_system", "");
+	// Set this to 0 to prevent trying to partition this device, just in case
+	DataManager::SetValue("tw_partition_removable", 0);
 	return 0;
 }
 
@@ -911,7 +930,7 @@ int GUIAction::screenshot(std::string arg __unused)
 		strcpy(path, "/tmp/");
 	}
 
-	if(!TWFunc::Create_Dir_Recursive(path, 0666, uid, gid))
+	if(!TWFunc::Create_Dir_Recursive(path, 0775, uid, gid))
 		return 0;
 
 	tm = time(NULL);
@@ -1152,9 +1171,8 @@ int GUIAction::nandroid(std::string arg)
 		if (arg == "backup") {
 			string Backup_Name;
 			DataManager::GetValue(TW_BACKUP_NAME, Backup_Name);
-			string auto_gen = gui_lookup("auto_gen", "(Auto Generate)");
-			string curr_date = gui_lookup("curr_date", "(Current Date)");
-			if (Backup_Name == "(Auto Generate)" || Backup_Name == "(Current Date)" || Backup_Name == "0" || Backup_Name == "(" || PartitionManager.Check_Backup_Name(true) == 0) {
+			string auto_gen = gui_lookup("auto_generate", "(Auto Generate)");
+			if (Backup_Name == auto_gen || Backup_Name == gui_lookup("curr_date", "(Current Date)") || Backup_Name == "0" || Backup_Name == "(" || PartitionManager.Check_Backup_Name(true) == 0) {
 				ret = PartitionManager.Run_Backup();
 			}
 			else {
@@ -1180,7 +1198,7 @@ int GUIAction::nandroid(std::string arg)
 		}
 		else {
 			DataManager::SetValue("tw_cancel_backup", 1);
-			gui_msg("backup_cancel=Backup Canceled.");
+			gui_msg("backup_cancel=Backup Cancelled");
 			ret = 0;
 		}
 		operation_end(ret);
@@ -1202,21 +1220,26 @@ int GUIAction::cancelbackup(std::string arg __unused) {
 	return 0;
 }
 
-int GUIAction::fixpermissions(std::string arg __unused)
+int GUIAction::fixcontexts(std::string arg __unused)
 {
 	int op_status = 0;
 
-	operation_start("Fix Permissions");
-	LOGINFO("fix permissions started!\n");
+	operation_start("Fix Contexts");
+	LOGINFO("fix contexts started!\n");
 	if (simulate) {
 		simulate_progress_bar();
 	} else {
-		op_status = PartitionManager.Fix_Permissions();
+		op_status = PartitionManager.Fix_Contexts();
 		if (op_status != 0)
 			op_status = 1; // failure
 	}
 	operation_end(op_status);
 	return 0;
+}
+
+int GUIAction::fixpermissions(std::string arg)
+{
+	return fixcontexts(arg);
 }
 
 int GUIAction::dd(std::string arg)
@@ -1450,6 +1473,7 @@ int GUIAction::decrypt(std::string arg __unused)
 					LOGINFO("Got default contexts and file mode for storage files.\n");
 				}
 			}
+			PartitionManager.Decrypt_Adopted();
 		}
 	}
 

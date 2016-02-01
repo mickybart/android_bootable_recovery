@@ -28,11 +28,12 @@
 #include <string>
 #include <cctype>
 #include <linux/input.h>
+#include <sys/wait.h>
 
 extern "C" {
 #include "../twcommon.h"
-#include "../minuitwrp/minui.h"
 }
+#include "../minuitwrp/minui.h"
 
 #include "rapidxml.hpp"
 #include "objects.hpp"
@@ -124,11 +125,10 @@ public:
 		int rc = ::read(fdMaster, buffer, size);
 		debug_printf("pty read: %d bytes\n", rc);
 		if (rc < 0) {
-			LOGINFO("pty read failed: %d\n", errno);
-			// assume child has died
-			close(fdMaster);
-			g_pty_fd = fdMaster = -1;
-			pid = 0;
+			// assume child has died (usual errno when shell exits seems to be EIO == 5)
+			if (errno != EIO)
+				LOGERR("pty read failed: %d\n", errno);
+			stop();
 		}
 		return rc;
 	}
@@ -142,11 +142,9 @@ public:
 		int rc = ::write(fdMaster, buffer, size);
 		debug_printf("pty write: %d bytes -> %d\n", size, rc);
 		if (rc < 0) {
-			LOGINFO("pty write failed: %d\n", errno);
+			LOGERR("pty write failed: %d\n", errno);
 			// assume child has died
-			close(fdMaster);
-			g_pty_fd = fdMaster = -1;
-			pid = 0;
+			stop();
 		}
 		return rc;
 	}
@@ -168,9 +166,22 @@ public:
 			LOGERR("failed to set window size, error %d\n", errno);
 	}
 
+	void stop()
+	{
+		if (!started()) {
+			LOGERR("someone tried to stop pty, but it was not started\n");
+			return;
+		}
+		close(fdMaster);
+		g_pty_fd = fdMaster = -1;
+		int status;
+		waitpid(pid, &status, WNOHANG); // avoid zombies but don't hang if the child is still alive and we got here due to some error
+		pid = 0;
+	}
+
 private:
 	int fdMaster;
-	int pid;
+	pid_t pid;
 };
 
 // UTF-8 decoder
@@ -822,6 +833,8 @@ int GUITerminal::NotifyTouch(TOUCH_STATE state, int x, int y)
 
 int GUITerminal::NotifyKey(int key, bool down)
 {
+	if (!HasInputFocus)
+		return 1;
 	if (down)
 		if (engine->inputKey(key))
 			mUpdate = 1;
@@ -856,10 +869,10 @@ void GUITerminal::RenderItem(size_t itemindex, int yPos, bool selected)
 		// render cursor
 		int cursorX = engine->getCursorX();
 		std::string leftOfCursor = line.substr(0, cursorX);
-		int x = gr_measureEx(leftOfCursor.c_str(), mFont->GetResource());
+		int x = gr_ttf_measureEx(leftOfCursor.c_str(), mFont->GetResource());
 		// note that this single character can be a UTF-8 sequence
 		std::string atCursor = (size_t)cursorX < line.length() ? line.substr(cursorX, 1) : " ";
-		int w = gr_measureEx(atCursor.c_str(), mFont->GetResource());
+		int w = gr_ttf_measureEx(atCursor.c_str(), mFont->GetResource());
 		gr_color(mFontColor.red, mFontColor.green, mFontColor.blue, mFontColor.alpha);
 		gr_fill(mRenderX + x, yPos, w, actualItemHeight);
 		gr_color(mBackgroundColor.red, mBackgroundColor.green, mBackgroundColor.blue, mBackgroundColor.alpha);
@@ -877,7 +890,7 @@ void GUITerminal::InitAndResize()
 	// make sure the shell is started
 	engine->initPty();
 	// send window resize
-	int charWidth = gr_measureEx("N", mFont->GetResource());
+	int charWidth = gr_ttf_measureEx("N", mFont->GetResource());
 	engine->setSize(mRenderW / charWidth, GetDisplayItemCount(), mRenderW, mRenderH);
 }
 

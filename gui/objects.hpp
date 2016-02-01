@@ -337,6 +337,7 @@ protected:
 	int wipe(std::string arg);
 	int refreshsizes(std::string arg);
 	int nandroid(std::string arg);
+	int fixcontexts(std::string arg);
 	int fixpermissions(std::string arg);
 	int dd(std::string arg);
 	int partitionsd(std::string arg);
@@ -652,6 +653,7 @@ protected:
 	ImageResource* mIconSelected;
 	ImageResource* mIconUnselected;
 	bool isCheckList;
+	bool isTextParsed;
 };
 
 class GUIPartitionList : public GUIScrollList

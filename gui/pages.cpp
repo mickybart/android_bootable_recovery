@@ -39,15 +39,18 @@
 
 extern "C" {
 #include "../twcommon.h"
-#include "../minuitwrp/minui.h"
 #include "../minzip/SysUtil.h"
 #include "../minzip/Zip.h"
 #include "gui.h"
 }
+#include "../minuitwrp/minui.h"
 
 #include "rapidxml.hpp"
 #include "objects.hpp"
 #include "blanktimer.hpp"
+
+#define TW_THEME_VERSION 1
+#define TW_THEME_VER_ERR -2
 
 extern int gGuiRunning;
 
@@ -61,7 +64,6 @@ extern std::vector<std::string> gConsoleColor;
 
 std::map<std::string, PageSet*> PageManager::mPageSets;
 PageSet* PageManager::mCurrentSet;
-PageSet* PageManager::mBaseSet = NULL;
 MouseCursor *PageManager::mMouseCursor = NULL;
 HardwareKeyboard *PageManager::mHardwareKeyboard = NULL;
 bool PageManager::mReloadTheme = false;
@@ -684,6 +686,7 @@ int PageSet::LoadLanguage(char* languageFile, ZipArchive* package)
 	xml_node<>* parent;
 	xml_node<>* child;
 	std::string resource_source;
+	int ret = 0;
 
 	if (languageFile) {
 		printf("parsing languageFile\n");
@@ -714,12 +717,13 @@ int PageSet::LoadLanguage(char* languageFile, ZipArchive* package)
 	if (child)
 		mResources->LoadResources(child, package, resource_source);
 	else
-		return -1;
+		ret = -1;
+	DataManager::SetValue("tw_backup_name", gui_lookup("auto_generate", "(Auto Generate)"));
 	lang.clear();
-	return 0;
+	return ret;
 }
 
-int PageSet::Load(ZipArchive* package, char* xmlFile, char* languageFile)
+int PageSet::Load(ZipArchive* package, char* xmlFile, char* languageFile, char* baseLanguageFile)
 {
 	xml_document<> mDoc;
 	xml_node<>* parent;
@@ -734,12 +738,32 @@ int PageSet::Load(ZipArchive* package, char* xmlFile, char* languageFile)
 
 	set_scale_values(1, 1); // Reset any previous scaling values
 
+	if (baseLanguageFile)
+		LoadLanguage(baseLanguageFile, NULL);
+
 	// Now, let's parse the XML
-	LOGINFO("Checking resolution...\n");
 	child = parent->first_node("details");
 	if (child) {
+		int theme_ver = 0;
+		xml_node<>* themeversion = child->first_node("themeversion");
+		if (themeversion && themeversion->value()) {
+			theme_ver = atoi(themeversion->value());
+		} else {
+			LOGINFO("No themeversion in theme.\n");
+		}
+		if (theme_ver != TW_THEME_VERSION) {
+			LOGINFO("theme version from xml: %i, expected %i\n", theme_ver, TW_THEME_VERSION);
+			if (package) {
+				gui_err("theme_ver_err=Custom theme version does not match TWRP version. Using stock theme.");
+				mDoc.clear();
+				return TW_THEME_VER_ERR;
+			} else {
+				gui_print_color("warning", "Stock theme version does not match TWRP version.\n");
+			}
+		}
 		xml_node<>* resolution = child->first_node("resolution");
 		if (resolution) {
+			LOGINFO("Checking resolution...\n");
 			xml_attribute<>* width_attr = resolution->first_attribute("width");
 			xml_attribute<>* height_attr = resolution->first_attribute("height");
 			xml_attribute<>* noscale_attr = resolution->first_attribute("noscaling");
@@ -1334,6 +1358,7 @@ int PageManager::LoadPackage(std::string name, std::string package, std::string 
 	long len;
 	char* xmlFile = NULL;
 	char* languageFile = NULL;
+	char* baseLanguageFile = NULL;
 	PageSet* pageSet = NULL;
 	int ret;
 	MemMapping map;
@@ -1371,6 +1396,7 @@ int PageManager::LoadPackage(std::string name, std::string package, std::string 
 		package = "ui.xml";
 		LoadLanguageList(pZip);
 		languageFile = LoadFileToBuffer("languages/en.xml", pZip);
+		baseLanguageFile = LoadFileToBuffer(TWRES "languages/en.xml", NULL);
 	}
 
 	xmlFile = LoadFileToBuffer(package, pZip);
@@ -1381,24 +1407,18 @@ int PageManager::LoadPackage(std::string name, std::string package, std::string 
 	// Before loading, mCurrentSet must be the loading package so we can find resources
 	pageSet = mCurrentSet;
 	mCurrentSet = new PageSet(xmlFile);
-	ret = mCurrentSet->Load(pZip, xmlFile, languageFile);
+	ret = mCurrentSet->Load(pZip, xmlFile, languageFile, baseLanguageFile);
 	if (languageFile) {
 		free(languageFile);
 		languageFile = NULL;
 	}
-	if (ret == 0)
-	{
+	if (ret == 0) {
 		mCurrentSet->SetPage(startpage);
 		mPageSets.insert(std::pair<std::string, PageSet*>(name, mCurrentSet));
+	} else {
+		if (ret != TW_THEME_VER_ERR)
+			LOGERR("Package %s failed to load.\n", name.c_str());
 	}
-	else
-	{
-		LOGERR("Package %s failed to load.\n", name.c_str());
-	}
-
-	// The first successful package we loaded is the base
-	if (mBaseSet == NULL)
-		mBaseSet = mCurrentSet;
 
 	mCurrentSet = pageSet;
 
@@ -1475,8 +1495,6 @@ int PageManager::ReloadPackage(std::string name, std::string package)
 	}
 	if (mCurrentSet == set)
 		SelectPackage(name);
-	if (mBaseSet == set)
-		mBaseSet = mCurrentSet;
 	delete set;
 	GUIConsole::Translate_Now();
 	return 0;
@@ -1493,6 +1511,8 @@ void PageManager::ReleasePackage(std::string name)
 	PageSet* set = (*iter).second;
 	mPageSets.erase(iter);
 	delete set;
+	if (set == mCurrentSet)
+		mCurrentSet = NULL;
 	return;
 }
 
@@ -1540,6 +1560,10 @@ void PageManager::RequestReload() {
 	mReloadTheme = true;
 }
 
+void PageManager::SetStartPage(const std::string& page_name) {
+	mStartPage = page_name;
+}
+
 int PageManager::ChangePage(std::string name)
 {
 	DataManager::SetValue("tw_operation_state", 0);
@@ -1558,7 +1582,7 @@ int PageManager::ChangeOverlay(std::string name)
 		return mCurrentSet->SetOverlay(NULL);
 	else
 	{
-		Page* page = mBaseSet ? mBaseSet->FindPage(name) : NULL;
+		Page* page = mCurrentSet ? mCurrentSet->FindPage(name) : NULL;
 		return mCurrentSet->SetOverlay(page);
 	}
 }
