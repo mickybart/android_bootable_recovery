@@ -54,6 +54,7 @@ LOCAL_SRC_FILES += \
     data.cpp \
     partition.cpp \
     partitionmanager.cpp \
+    progresstracking.cpp \
     twinstall.cpp \
     twrp-functions.cpp \
     openrecoveryscript.cpp \
@@ -180,24 +181,6 @@ ifneq ($(TW_NO_SCREEN_TIMEOUT),)
 endif
 ifeq ($(BOARD_HAS_NO_REAL_SDCARD), true)
     LOCAL_CFLAGS += -DBOARD_HAS_NO_REAL_SDCARD
-endif
-ifneq ($(SP1_NAME),)
-	LOCAL_CFLAGS += -DSP1_NAME=$(SP1_NAME) -DSP1_BACKUP_METHOD=$(SP1_BACKUP_METHOD) -DSP1_MOUNTABLE=$(SP1_MOUNTABLE)
-endif
-ifneq ($(SP1_DISPLAY_NAME),)
-	LOCAL_CFLAGS += -DSP1_DISPLAY_NAME=$(SP1_DISPLAY_NAME)
-endif
-ifneq ($(SP2_NAME),)
-	LOCAL_CFLAGS += -DSP2_NAME=$(SP2_NAME) -DSP2_BACKUP_METHOD=$(SP2_BACKUP_METHOD) -DSP2_MOUNTABLE=$(SP2_MOUNTABLE)
-endif
-ifneq ($(SP2_DISPLAY_NAME),)
-	LOCAL_CFLAGS += -DSP2_DISPLAY_NAME=$(SP2_DISPLAY_NAME)
-endif
-ifneq ($(SP3_NAME),)
-	LOCAL_CFLAGS += -DSP3_NAME=$(SP3_NAME) -DSP3_BACKUP_METHOD=$(SP3_BACKUP_METHOD) -DSP3_MOUNTABLE=$(SP3_MOUNTABLE)
-endif
-ifneq ($(SP3_DISPLAY_NAME),)
-	LOCAL_CFLAGS += -DSP3_DISPLAY_NAME=$(SP3_DISPLAY_NAME)
 endif
 ifneq ($(RECOVERY_SDCARD_ON_DATA),)
 	LOCAL_CFLAGS += -DRECOVERY_SDCARD_ON_DATA
@@ -431,11 +414,11 @@ endif
 ifneq ($(TW_EXCLUDE_DEFAULT_USB_INIT), true)
     LOCAL_ADDITIONAL_DEPENDENCIES += init.recovery.usb.rc
 endif
-ifeq ($(TARGET_USES_LOGD), true)
-    LOCAL_ADDITIONAL_DEPENDENCIES += logd libsysutils libnl init.recovery.logd.rc
-endif
 ifeq ($(TWRP_INCLUDE_LOGCAT), true)
     LOCAL_ADDITIONAL_DEPENDENCIES += logcat
+    ifeq ($(TARGET_USES_LOGD), true)
+        LOCAL_ADDITIONAL_DEPENDENCIES += logd libsysutils libnl init.recovery.logd.rc
+    endif
 endif
 # Allow devices to specify device-specific recovery dependencies
 ifneq ($(TARGET_RECOVERY_DEVICE_MODULES),)
@@ -471,6 +454,16 @@ include $(CLEAR_VARS)
 # Create busybox symlinks... gzip and gunzip are excluded because those need to link to pigz instead
 BUSYBOX_LINKS := $(shell cat external/busybox/busybox-full.links)
 exclude := tune2fs mke2fs mkdosfs mkfs.vfat gzip gunzip
+
+# Having /sbin/modprobe present on 32 bit devices with can cause a massive
+# performance problem if the kernel has CONFIG_MODULES=y
+ifeq ($(shell test $(PLATFORM_SDK_VERSION) -gt 22; echo $$?),0)
+    ifneq ($(TARGET_ARCH), arm64)
+        ifneq ($(TARGET_ARCH), x86_64)
+            exclude += modprobe
+        endif
+    endif
+endif
 
 # If busybox does not have restorecon, assume it does not have SELinux support.
 # Then, let toolbox provide 'ls' so -Z is available to list SELinux contexts.
